@@ -9,6 +9,27 @@ import (
 
 type ValueType byte
 
+func (vt ValueType) String() string {
+	switch vt {
+	case ValueType_Error:
+		return "Error"
+	case ValueType_End:
+		return "End"
+	case ValueType_Object:
+		return "Object"
+	case ValueType_Array:
+		return "Array"
+	case ValueType_Int64:
+		return "Int64"
+	case ValueType_Bool:
+		return "Bool"
+	case ValueType_String:
+		return "String"
+	default:
+		return fmt.Sprintf("Unknown(%d)", vt)
+	}
+}
+
 const (
 	ValueType_Error ValueType = iota
 	ValueType_End
@@ -127,8 +148,6 @@ type ReaderInterface interface {
 type Reader struct {
 	rd    ReaderInterface
 	depth int
-	len   int
-	cur   int
 }
 
 func Read(r *Reader) (Value, error) {
@@ -230,6 +249,36 @@ func iterArray(r *Reader, arr, av *Value) (bool, error) {
 	return true, nil
 }
 
+func IterateObject(r *Reader, obj *Value, kvFn func(key string, v *Value)) error {
+	var k, v Value
+	for {
+		if ok, err := iterObject(r, obj, &k, &v); err != nil {
+			return err
+		} else if !ok {
+			break
+		}
+		// assert key is string
+		if k.Type != ValueType_String {
+			panic(fmt.Errorf("key is not string: %s\n", k.Type))
+		}
+		kvFn(k.VString, &v)
+	}
+	return nil
+}
+
+func IterateArray(r *Reader, arr *Value, avFn func(v *Value)) error {
+	var av Value
+	for {
+		if ok, err := iterArray(r, arr, &av); err != nil {
+			return err
+		} else if !ok {
+			break
+		}
+		avFn(&av)
+	}
+	return nil
+}
+
 func readIntoObj(r *Reader, kvFn func(key string, v *Value)) error {
 	var err error
 	var obj, k, v Value
@@ -271,10 +320,10 @@ func PrintValue(r *Reader, val Value, depth int) {
 			} else if !ok {
 				break
 			}
-			count++
 			if count > 0 {
 				fmt.Print(",\n")
 			}
+			count++
 			PrintIndent(depth + 1)
 			PrintValue(r, k, depth+1)
 			fmt.Print(": ")
@@ -294,12 +343,12 @@ func PrintValue(r *Reader, val Value, depth int) {
 			} else if !ok {
 				break
 			}
-			count++
 			if count > 0 {
 				fmt.Print(",\n")
-				PrintIndent(depth + 1)
-				PrintValue(r, v, depth+1)
 			}
+			count++
+			PrintIndent(depth + 1)
+			PrintValue(r, v, depth+1)
 		}
 		if count > 0 {
 			fmt.Print("\n")
@@ -375,6 +424,20 @@ func (s *Sample) Marshal(w *Writer) error {
 	WriteInt64(w, s.Age)
 	WriteString(w, "isHuman")
 	WriteBool(w, s.IsHuman)
+
+	// nested
+	WriteString(w, "nested")
+	WriteObject(w) // < nested
+	WriteString(w, "inner")
+	WriteInt64(w, s.Nested.Inner)
+	WriteString(w, "attrs")
+	WriteArray(w) // < array
+	for _, attr := range s.Nested.Attrs {
+		WriteString(w, attr)
+	}
+	WriteEnd(w) // > array
+	WriteEnd(w) // > nested
+
 	WriteEnd(w)
 	return nil
 }
@@ -402,7 +465,11 @@ func (n *Nested) Unmarshal(r *Reader) error {
 }
 
 func (s *Sample) Unmarshal(r *Reader) error {
-	return readIntoObj(r, func(key string, v *Value) {
+	obj, err := Read(r)
+	if err != nil {
+		return err
+	}
+	err = IterateObject(r, &obj, func(key string, v *Value) {
 		switch key {
 		case "name":
 			s.Name = v.VString
@@ -412,13 +479,30 @@ func (s *Sample) Unmarshal(r *Reader) error {
 			s.IsHuman = v.VBool
 		case "nested":
 			var n Nested
-			n.Unmarshal(r)
+			err := IterateObject(r, v, func(key string, v *Value) {
+				switch key {
+				case "inner":
+					n.Inner = v.VInt64
+				case "attrs":
+					err := IterateArray(r, v, func(v *Value) {
+						n.Attrs = append(n.Attrs, v.VString)
+					})
+					if err != nil {
+						panic(err)
+					}
+				}
+			})
+			if err != nil {
+				panic(err)
+			}
+			//n.Unmarshal(r)
 			s.Nested = n
 		}
 	})
+	return err
 }
 
-func main2() {
+func main() {
 	fmt.Println("simpser start")
 
 	var bb bytes.Buffer
@@ -426,6 +510,10 @@ func main2() {
 		Name:    "testing",
 		Age:     18,
 		IsHuman: true,
+		Nested: Nested{
+			Inner: 123,
+			Attrs: []string{"aa", "bb", "cc"},
+		},
 	}
 	w := &Writer{
 		wr: &bb,
@@ -455,7 +543,7 @@ func main2() {
 	fmt.Println("unmarshalled: ", s2)
 }
 
-func main() {
+func main3() {
 	fmt.Println("simpser map")
 	var bb bytes.Buffer
 	w := &Writer{
