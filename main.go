@@ -516,7 +516,7 @@ func (s *Sample) Unmarshal(r *Reader, rv *Value) {
 	})
 }
 
-func main() {
+func main_2() {
 	fmt.Println("simpser start")
 
 	var bb bytes.Buffer
@@ -539,21 +539,23 @@ func main() {
 
 	var s2 Sample
 	if err := NewReader(&bb).Decode(&s2); err != nil {
-		panic("panic on unmarshalling: " + err.Error())
+		fmt.Println("error on unmarshalling: " + err.Error())
 	}
 	fmt.Println("unmarshalled: ", s2)
 }
 
-func main3() {
+func main() {
 	fmt.Println("simpser map")
 	var bb bytes.Buffer
 	w := &Writer{
 		wr: &bb,
 	}
 	m := map[string]any{
-		"name":    "testing",
-		"age":     18,
-		"isHuman": true,
+		"name":     "testing_from_map",
+		"age":      18,
+		"isHuman":  true,
+		"lastVal":  999,
+		"otherVal": "dafaq",
 		"nested": map[string]any{
 			"inner": 123,
 			"attrs": []any{"a", "b", "c"},
@@ -562,6 +564,12 @@ func main3() {
 	WriteVal(w, m)
 	fmt.Println("marshalled: ", bb.Bytes())
 	fmt.Println(string(bb.Bytes()))
+
+	var s2 Sample
+	if err := NewReader(&bb).Decode(&s2); err != nil {
+		fmt.Println("error on unmarshalling: " + err.Error())
+	}
+	fmt.Println("unmarshalled: ", s2)
 
 	//r2 := &Reader{
 	//	rd: &bb,
