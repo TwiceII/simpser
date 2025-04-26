@@ -40,10 +40,6 @@ const (
 	ValueType_String
 )
 
-type Writer struct {
-	wr io.Writer
-}
-
 type Value struct {
 	Type  ValueType
 	Depth int
@@ -53,87 +49,125 @@ type Value struct {
 	VBool   bool
 }
 
-func writeUint64(w *Writer, v uint64) {
+type Writer struct {
+	wr  io.Writer
+	err error
+}
+
+type Marshalable interface {
+	Marshal(w *Writer)
+}
+
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		wr: w,
+	}
+}
+
+func (w *Writer) Encode(v Marshalable) error {
+	if w.err != nil {
+		return w.err
+	}
+	v.Marshal(w)
+	return w.Err()
+}
+
+func (w *Writer) Err() error {
+	return w.err
+}
+
+func (w *Writer) write(b []byte) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = w.wr.Write(b)
+}
+
+func (w *Writer) writeByte(b byte) {
+	w.write([]byte{b})
+}
+
+func (w *Writer) writeUint64(v uint64) {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, v)
-	w.wr.Write(b)
+	w.write(b)
 }
 
-func writeInt64(w *Writer, v int64) {
+func (w *Writer) writeInt64(v int64) {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(v))
-	w.wr.Write(b)
+	w.write(b)
 }
 
-func writeInt32(w *Writer, v int32) {
+func (w *Writer) writeInt32(v int32) {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(v))
-	w.wr.Write(b)
+	w.write(b)
 }
 
-func Write(w *Writer, v Value) {
+func (w *Writer) Write(v Value) {
 	// write tag byte
-	w.wr.Write([]byte{byte(v.Type)})
+	w.writeByte(byte(v.Type))
 	switch v.Type {
 	case ValueType_Int64:
-		writeInt64(w, v.VInt64)
+		w.writeInt64(v.VInt64)
 		break
 	case ValueType_String:
-		writeInt32(w, int32(len(v.VString)))
-		w.wr.Write([]byte(v.VString))
+		w.writeInt32(int32(len(v.VString)))
+		w.write([]byte(v.VString))
 		break
 	case ValueType_Bool:
 		var bv byte
 		if v.VBool {
 			bv = 1
 		}
-		w.wr.Write([]byte{bv})
+		w.writeByte(bv)
 		break
 	}
 }
 
-func WriteInt(w *Writer, v int) {
-	Write(w, Value{
+func (w *Writer) Int(v int) {
+	w.Write(Value{
 		Type:   ValueType_Int64,
 		VInt64: int64(v),
 	})
 }
 
-func WriteInt64(w *Writer, v int64) {
-	Write(w, Value{
+func (w *Writer) Int64(v int64) {
+	w.Write(Value{
 		Type:   ValueType_Int64,
 		VInt64: v,
 	})
 }
 
-func WriteString(w *Writer, v string) {
-	Write(w, Value{
+func (w *Writer) String(v string) {
+	w.Write(Value{
 		Type:    ValueType_String,
 		VString: v,
 	})
 }
 
-func WriteBool(w *Writer, v bool) {
-	Write(w, Value{
+func (w *Writer) Bool(v bool) {
+	w.Write(Value{
 		Type:  ValueType_Bool,
 		VBool: v,
 	})
 }
 
-func WriteObject(w *Writer) {
-	Write(w, Value{
+func (w *Writer) Object() {
+	w.Write(Value{
 		Type: ValueType_Object,
 	})
 }
 
-func WriteArray(w *Writer) {
-	Write(w, Value{
+func (w *Writer) Array() {
+	w.Write(Value{
 		Type: ValueType_Array,
 	})
 }
 
-func WriteEnd(w *Writer) {
-	Write(w, Value{
+func (w *Writer) End() {
+	w.Write(Value{
 		Type: ValueType_End,
 	})
 }
@@ -145,12 +179,39 @@ type ReaderInterface interface {
 	io.ByteReader
 }
 
+type Unmarshalable interface {
+	Unmarshal(r *Reader, rv *Value)
+}
+
 type Reader struct {
 	rd    ReaderInterface
 	depth int
+	err   error
 }
 
-func Read(r *Reader) (Value, error) {
+func NewReader(r ReaderInterface) *Reader {
+	return &Reader{
+		rd: r,
+	}
+}
+
+func (r *Reader) Err() error {
+	return r.err
+}
+
+func (r *Reader) Decode(v Unmarshalable) error {
+	if r.err != nil {
+		return r.err
+	}
+	rv := r.Read()
+	v.Unmarshal(r, &rv)
+	return r.Err()
+}
+
+func (r *Reader) Read() Value {
+	if r.err != nil {
+		return Value{} // default is ValueType_Error
+	}
 	var v Value
 	// read type byte
 	var (
@@ -158,7 +219,8 @@ func Read(r *Reader) (Value, error) {
 		err   error
 	)
 	if typeB, err = r.rd.ReadByte(); err != nil {
-		return v, err
+		r.err = err
+		return v
 	}
 	v.Type = ValueType(typeB)
 	switch v.Type {
@@ -171,17 +233,20 @@ func Read(r *Reader) (Value, error) {
 		break
 	case ValueType_Int64:
 		if err := binary.Read(r.rd, binary.BigEndian, &v.VInt64); err != nil {
-			return v, err
+			r.err = err
+			return v
 		}
 		break
 	case ValueType_String:
 		var sLen int32
 		if err := binary.Read(r.rd, binary.BigEndian, &sLen); err != nil {
-			return v, err
+			r.err = err
+			return v
 		}
 		b := make([]byte, sLen)
 		if _, err := r.rd.Read(b); err != nil {
-			return v, err
+			r.err = err
+			return v
 		}
 		v.VString = string(b)
 		break
@@ -191,7 +256,8 @@ func Read(r *Reader) (Value, error) {
 			err error
 		)
 		if bv, err = r.rd.ReadByte(); err != nil {
-			return v, err
+			r.err = err
+			return v
 		}
 		if bv == 1 {
 			v.VBool = true
@@ -200,61 +266,53 @@ func Read(r *Reader) (Value, error) {
 		}
 		break
 	default:
-		return v, fmt.Errorf("unknown value type: %d", v.Type)
+		r.err = fmt.Errorf("unknown value type: %d", v.Type)
+		return v
 	}
 
-	return v, nil
+	return v
 }
 
-func discardUntilDepth(r *Reader, depth int) {
+func (r *Reader) discardUntilDepth(depth int) {
 	for {
 		if r.depth == depth {
 			break
 		}
 
-		_, err := Read(r)
-		if err != nil {
+		r.Read()
+		if r.err != nil {
 			break
 		}
 	}
 }
 
-func iterObject(r *Reader, obj, k, v *Value) (bool, error) {
-	discardUntilDepth(r, obj.Depth)
-	var err error
-	*k, err = Read(r)
-	if err != nil {
-		return false, err
+func (r *Reader) iterObject(obj, k, v *Value) bool {
+	r.discardUntilDepth(obj.Depth)
+	*k = r.Read()
+	if k.Type == ValueType_Error || k.Type == ValueType_End {
+		return false
 	}
-	if k.Type == ValueType_End {
-		return false, nil
+	*v = r.Read()
+	if v.Type == ValueType_Error {
+		return false
 	}
-	*v, err = Read(r)
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+
+	return true
 }
 
-func iterArray(r *Reader, arr, av *Value) (bool, error) {
-	discardUntilDepth(r, arr.Depth)
-	var err error
-	*av, err = Read(r)
-	if err != nil {
-		return false, err
+func (r *Reader) iterArray(arr, av *Value) bool {
+	r.discardUntilDepth(arr.Depth)
+	*av = r.Read()
+	if av.Type == ValueType_Error || av.Type == ValueType_End {
+		return false
 	}
-	if av.Type == ValueType_End {
-		return false, nil
-	}
-	return true, nil
+	return true
 }
 
-func IterateObject(r *Reader, obj *Value, kvFn func(key string, v *Value)) error {
+func (r *Reader) IterateObject(obj *Value, kvFn func(key string, v *Value)) {
 	var k, v Value
 	for {
-		if ok, err := iterObject(r, obj, &k, &v); err != nil {
-			return err
-		} else if !ok {
+		if ok := r.iterObject(obj, &k, &v); !ok {
 			break
 		}
 		// assert key is string
@@ -263,49 +321,29 @@ func IterateObject(r *Reader, obj *Value, kvFn func(key string, v *Value)) error
 		}
 		kvFn(k.VString, &v)
 	}
-	return nil
 }
 
-func IterateArray(r *Reader, arr *Value, avFn func(v *Value)) error {
+func (r *Reader) IterateArray(arr *Value, avFn func(v *Value)) {
 	var av Value
 	for {
-		if ok, err := iterArray(r, arr, &av); err != nil {
-			return err
-		} else if !ok {
+		if ok := r.iterArray(arr, &av); !ok {
 			break
 		}
 		avFn(&av)
 	}
-	return nil
-}
-
-func readIntoObj(r *Reader, kvFn func(key string, v *Value)) error {
-	var err error
-	var obj, k, v Value
-	if obj, err = Read(r); err != nil {
-		return err
-	}
-	for {
-		if ok, err := iterObject(r, &obj, &k, &v); err != nil {
-			return err
-		} else if !ok {
-			break
-		}
-		// assert key is string
-		if k.Type != ValueType_String {
-			panic(fmt.Errorf("key is not string: %s\n", k.Type))
-		}
-		kvFn(k.VString, &v)
-	}
-	return nil
 }
 
 // ------------------ inspection ------------------
 
-func PrintIndent(depth int) {
+func printIndent(depth int) {
 	for i := 0; i < depth; i++ {
 		fmt.Print("  ")
 	}
+}
+
+func PrintReaderObject(r *Reader) {
+	obj := r.Read()
+	PrintValue(r, obj, 0)
 }
 
 func PrintValue(r *Reader, val Value, depth int) {
@@ -315,16 +353,14 @@ func PrintValue(r *Reader, val Value, depth int) {
 	case ValueType_Object:
 		fmt.Print("{\n")
 		for {
-			if ok, err := iterObject(r, &val, &k, &v); err != nil {
-				panic(err)
-			} else if !ok {
+			if ok := r.iterObject(&val, &k, &v); !ok {
 				break
 			}
 			if count > 0 {
 				fmt.Print(",\n")
 			}
 			count++
-			PrintIndent(depth + 1)
+			printIndent(depth + 1)
 			PrintValue(r, k, depth+1)
 			fmt.Print(": ")
 			PrintValue(r, v, depth+1)
@@ -332,28 +368,26 @@ func PrintValue(r *Reader, val Value, depth int) {
 		if count > 0 {
 			fmt.Print("\n")
 		}
-		PrintIndent(depth)
+		printIndent(depth)
 		fmt.Print("}")
 		break
 	case ValueType_Array:
 		fmt.Print("[\n")
 		for {
-			if ok, err := iterArray(r, &val, &v); err != nil {
-				panic(err)
-			} else if !ok {
+			if ok := r.iterArray(&val, &v); !ok {
 				break
 			}
 			if count > 0 {
 				fmt.Print(",\n")
 			}
 			count++
-			PrintIndent(depth + 1)
+			printIndent(depth + 1)
 			PrintValue(r, v, depth+1)
 		}
 		if count > 0 {
 			fmt.Print("\n")
 		}
-		PrintIndent(depth)
+		printIndent(depth)
 		fmt.Print("]")
 		break
 	case ValueType_Int64:
@@ -379,24 +413,24 @@ func PrintValue(r *Reader, val Value, depth int) {
 func WriteVal(w *Writer, v any) {
 	switch v := v.(type) {
 	case map[string]any:
-		WriteObject(w)
+		w.Object()
 		for k, v := range v {
-			WriteString(w, k)
+			w.String(k)
 			WriteVal(w, v)
 		}
-		WriteEnd(w)
+		w.End()
 	case []any:
-		WriteArray(w)
+		w.Array()
 		for _, item := range v {
 			WriteVal(w, item)
 		}
-		WriteEnd(w)
+		w.End()
 	case string:
-		WriteString(w, v)
+		w.String(v)
 	case int:
-		WriteInt(w, v)
+		w.Int(v)
 	case bool:
-		WriteBool(w, v)
+		w.Bool(v)
 	default:
 		panic(fmt.Errorf("unsupported type %T", v))
 	}
@@ -414,99 +448,79 @@ type Sample struct {
 	Age     int64
 	IsHuman bool
 	Nested  Nested
+	LastVal int64
 }
 
-func (s *Sample) Marshal(w *Writer) error {
-	WriteObject(w)
-	WriteString(w, "name")
-	WriteString(w, s.Name)
-	WriteString(w, "age")
-	WriteInt64(w, s.Age)
-	WriteString(w, "isHuman")
-	WriteBool(w, s.IsHuman)
+func (s *Sample) Marshal(w *Writer) {
+	w.Object()
+	w.String("name")
+	w.String(s.Name)
+	w.String("age")
+	w.Int64(s.Age)
+	w.String("isHuman")
+	w.Bool(s.IsHuman)
 
 	// nested
-	WriteString(w, "nested")
-	WriteObject(w) // < nested
-	WriteString(w, "inner")
-	WriteInt64(w, s.Nested.Inner)
-	WriteString(w, "attrs")
-	WriteArray(w) // < array
+	w.String("nested")
+	w.Object() // < nested
+	w.String("inner")
+	w.Int64(s.Nested.Inner)
+	w.String("attrs")
+	w.Array() // < array
 	for _, attr := range s.Nested.Attrs {
-		WriteString(w, attr)
+		w.String(attr)
 	}
-	WriteEnd(w) // > array
-	WriteEnd(w) // > nested
+	w.End() // > array
+	w.End() // > nested
 
-	WriteEnd(w)
-	return nil
+	w.String("lastVal")
+	w.Int64(s.LastVal)
+
+	w.End()
 }
 
-func (n *Nested) Unmarshal(r *Reader) error {
-	return readIntoObj(r, func(key string, v *Value) {
+func (n *Nested) Unmarshal(r *Reader, rv *Value) {
+	r.IterateObject(rv, func(key string, v *Value) {
 		switch key {
 		case "inner":
 			n.Inner = v.VInt64
+			break
 		case "attrs":
-			if v.Type != ValueType_Array {
-				panic(fmt.Errorf("attrs is not array: %s\n", v.Type))
-			}
-			for {
-				var av Value
-				if ok, err := iterArray(r, v, &av); err != nil {
-					panic(err)
-				} else if !ok {
-					break
-				}
-				n.Attrs = append(n.Attrs, av.VString)
-			}
+			r.IterateArray(v, func(v *Value) {
+				n.Attrs = append(n.Attrs, v.VString)
+			})
+			break
 		}
 	})
 }
 
-func (s *Sample) Unmarshal(r *Reader) error {
-	obj, err := Read(r)
-	if err != nil {
-		return err
-	}
-	err = IterateObject(r, &obj, func(key string, v *Value) {
+func (s *Sample) Unmarshal(r *Reader, rv *Value) {
+	r.IterateObject(rv, func(key string, v *Value) {
 		switch key {
 		case "name":
 			s.Name = v.VString
+			break
 		case "age":
 			s.Age = v.VInt64
+			break
 		case "isHuman":
 			s.IsHuman = v.VBool
+			break
 		case "nested":
-			var n Nested
-			err := IterateObject(r, v, func(key string, v *Value) {
-				switch key {
-				case "inner":
-					n.Inner = v.VInt64
-				case "attrs":
-					err := IterateArray(r, v, func(v *Value) {
-						n.Attrs = append(n.Attrs, v.VString)
-					})
-					if err != nil {
-						panic(err)
-					}
-				}
-			})
-			if err != nil {
-				panic(err)
-			}
-			//n.Unmarshal(r)
-			s.Nested = n
+			s.Nested.Unmarshal(r, v)
+			break
+		case "lastVal":
+			s.LastVal = v.VInt64
+			break
 		}
 	})
-	return err
 }
 
 func main() {
 	fmt.Println("simpser start")
 
 	var bb bytes.Buffer
-	s := &Sample{
+	s := Sample{
 		Name:    "testing",
 		Age:     18,
 		IsHuman: true,
@@ -514,30 +528,17 @@ func main() {
 			Inner: 123,
 			Attrs: []string{"aa", "bb", "cc"},
 		},
+		LastVal: 777,
 	}
-	w := &Writer{
-		wr: &bb,
-	}
-
-	if err := s.Marshal(w); err != nil {
+	if err := NewWriter(&bb).Encode(&s); err != nil {
 		panic("panic on marshalling: " + err.Error())
 	}
 	fmt.Println("marshalled: ", bb.Bytes())
 
-	//r := &Reader{
-	//	rd: &bb,
-	//}
-	//obj, err := Read(r)
-	//if err != nil {
-	//	panic("panic on reading: " + err.Error())
-	//}
-	//PrintValue(r, obj, 0)
+	//PrintReaderObject(NewReader(&bb))
 
-	r2 := &Reader{
-		rd: &bb,
-	}
-	s2 := &Sample{}
-	if err := s2.Unmarshal(r2); err != nil {
+	var s2 Sample
+	if err := NewReader(&bb).Decode(&s2); err != nil {
 		panic("panic on unmarshalling: " + err.Error())
 	}
 	fmt.Println("unmarshalled: ", s2)
