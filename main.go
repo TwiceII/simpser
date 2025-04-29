@@ -45,110 +45,116 @@ type Value struct {
 	Type  ValueType
 	Depth int
 
-	VInt64  int64
-	VString string
-	VBool   bool
+	VInt64  *int64
+	VString *string
+	VBool   *bool
+}
+
+type WriterInterface interface {
+	io.Writer
+	io.ByteWriter
 }
 
 type Writer struct {
-	wr  io.Writer
-	err error
+	wr   WriterInterface
+	data []byte
 }
 
 type Marshalable interface {
 	Marshal(w *Writer)
 }
 
-func NewWriter(w io.Writer) *Writer {
+func NewWriter(w WriterInterface) *Writer {
+	if w == nil {
+		panic("writer is nil")
+	}
 	return &Writer{
-		wr: w,
+		wr:   w,
+		data: make([]byte, 0, 64),
 	}
 }
 
 func (w *Writer) Encode(v Marshalable) error {
-	if w.err != nil {
-		return w.err
-	}
 	v.Marshal(w)
-	return w.Err()
+	_, err := w.wr.Write(w.data)
+	return err
 }
 
-func (w *Writer) Err() error {
-	return w.err
-}
-
-func (w *Writer) write(b []byte) {
-	if w.err != nil {
-		return
+func (w *Writer) EnsureSpace(n int) {
+	var desiredSize = len(w.data) + n
+	if len(w.data) < desiredSize {
+		if cap(w.data) >= desiredSize {
+			w.data = w.data[:desiredSize]
+		} else {
+			w.data = append(w.data, make([]byte, desiredSize-len(w.data))...)
+		}
 	}
-	_, w.err = w.wr.Write(b)
 }
 
-func (w *Writer) writeByte(b byte) {
-	w.write([]byte{b})
+func (w *Writer) WriteBytes(newData ...byte) {
+	w.data = append(w.data, newData...)
 }
 
-func (w *Writer) writeUint64(v uint64) {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, v)
-	w.write(b)
+func (w *Writer) writeUint64(v *uint64) {
+	w.data = binary.BigEndian.AppendUint64(w.data, *v)
 }
 
-func (w *Writer) writeInt64(v int64) {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, uint64(v))
-	w.write(b)
+func (w *Writer) writeInt64(v *int64) {
+	w.data = binary.BigEndian.AppendUint64(w.data, uint64(*v))
 }
 
-func (w *Writer) writeInt32(v int32) {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, uint32(v))
-	w.write(b)
+func (w *Writer) writeInt32(v *int32) {
+	w.data = binary.BigEndian.AppendUint32(w.data, uint32(*v))
 }
 
 func (w *Writer) Write(v Value) {
 	// write tag byte
-	w.writeByte(byte(v.Type))
+	w.WriteBytes(byte(v.Type))
 	switch v.Type {
 	case ValueType_Int64:
 		w.writeInt64(v.VInt64)
 		break
 	case ValueType_String:
-		w.writeInt32(int32(len(v.VString)))
-		w.write([]byte(v.VString))
+		size := len(*v.VString)
+		sizeInt32 := int32(size)
+		w.writeInt32(&sizeInt32)
+		var pos = len(w.data)
+		w.EnsureSpace(size)
+		copy(w.data[pos:pos+size], *v.VString)
 		break
 	case ValueType_Bool:
 		var bv byte
-		if v.VBool {
+		if *v.VBool {
 			bv = 1
 		}
-		w.writeByte(bv)
+		w.WriteBytes(bv)
 		break
 	}
 }
 
-func (w *Writer) Int(v int) {
+func (w *Writer) Int(v *int) {
+	v64 := int64(*v)
 	w.Write(Value{
 		Type:   ValueType_Int64,
-		VInt64: int64(v),
+		VInt64: &v64,
 	})
 }
 
-func (w *Writer) Int64(v int64) {
+func (w *Writer) Int64(v *int64) {
 	w.Write(Value{
 		Type:   ValueType_Int64,
 		VInt64: v,
 	})
 }
 
-func (w *Writer) String(v string) {
+func (w *Writer) String(v *string) {
 	w.Write(Value{
 		Type:    ValueType_String,
 		VString: v,
 	})
 }
 
-func (w *Writer) Bool(v bool) {
+func (w *Writer) Bool(v *bool) {
 	w.Write(Value{
 		Type:  ValueType_Bool,
 		VBool: v,
@@ -187,27 +193,27 @@ func (w *Writer) Obj() *Obj {
 //	return o
 //}
 
-func (o *Obj) String(k string, v string) *Obj {
-	o.w.String(k)
-	o.w.String(v)
-	return o
-}
-
-func (o *Obj) Int64(k string, v int64) *Obj {
-	o.w.String(k)
-	o.w.Int64(v)
-	return o
-}
-
-func (o *Obj) Bool(k string, v bool) *Obj {
-	o.w.String(k)
-	o.w.Bool(v)
-	return o
-}
-
-func (o *Obj) End() {
-	o.w.End()
-}
+//func (o *Obj) String(k string, v string) *Obj {
+//	o.w.String(k)
+//	o.w.String(v)
+//	return o
+//}
+//
+//func (o *Obj) Int64(k string, v int64) *Obj {
+//	o.w.String(k)
+//	o.w.Int64(v)
+//	return o
+//}
+//
+//func (o *Obj) Bool(k string, v bool) *Obj {
+//	o.w.String(k)
+//	o.w.Bool(v)
+//	return o
+//}
+//
+//func (o *Obj) End() {
+//	o.w.End()
+//}
 
 // ------------------ reader ------------------
 
@@ -285,7 +291,8 @@ func (r *Reader) Read() Value {
 			r.err = err
 			return v
 		}
-		v.VString = string(b)
+		bs := string(b)
+		v.VString = &bs
 		break
 	case ValueType_Bool:
 		var (
@@ -297,9 +304,11 @@ func (r *Reader) Read() Value {
 			return v
 		}
 		if bv == 1 {
-			v.VBool = true
+			var b bool = true
+			v.VBool = &b
 		} else {
-			v.VBool = false
+			var b bool = false
+			v.VBool = &b
 		}
 		break
 	default:
@@ -356,7 +365,7 @@ func (r *Reader) IterateObject(obj *Value, kvFn func(key string, v *Value)) {
 		if k.Type != ValueType_String {
 			panic(fmt.Errorf("key is not string: %s\n", k.Type))
 		}
-		kvFn(k.VString, &v)
+		kvFn(*k.VString, &v)
 	}
 }
 
@@ -431,14 +440,14 @@ func PrintValue(r *Reader, val Value, depth int) {
 		fmt.Printf("%d", val.VInt64)
 		break
 	case ValueType_Bool:
-		if val.VBool {
+		if *val.VBool {
 			fmt.Print("true")
 		} else {
 			fmt.Print("false")
 		}
 		break
 	case ValueType_String:
-		fmt.Printf("%q", val.VString)
+		fmt.Printf("%q", *val.VString)
 		break
 	default:
 		fmt.Printf("ERROR: unknown value type: %d", val.Type)
@@ -452,7 +461,7 @@ func WriteVal(w *Writer, v any) {
 	case map[string]any:
 		w.Object()
 		for k, v := range v {
-			w.String(k)
+			w.String(&k)
 			WriteVal(w, v)
 		}
 		w.End()
@@ -463,11 +472,11 @@ func WriteVal(w *Writer, v any) {
 		}
 		w.End()
 	case string:
-		w.String(v)
+		w.String(&v)
 	case int:
-		w.Int(v)
+		w.Int(&v)
 	case bool:
-		w.Bool(v)
+		w.Bool(&v)
 	default:
 		panic(fmt.Errorf("unsupported type %T", v))
 	}
@@ -498,70 +507,76 @@ func (s *Sample) Marshal(w *Writer) {
 	//	End()
 
 	w.Object()
-	w.String("name")
-	w.String(s.Name)
-	w.String("age")
-	w.Int64(s.Age)
-	w.String("isHuman")
-	w.Bool(s.IsHuman)
+	n := "name"
+	w.String(&n)
+	w.String(&s.Name)
+	n = "age"
+	w.String(&n)
+	w.Int64(&s.Age)
+	n = "isHuman"
+	w.String(&n)
+	w.Bool(&s.IsHuman)
 
 	// nested
-	w.String("nested")
+	n = "nested"
+	w.String(&n)
 	w.Object() // < nested
-	w.String("inner")
-	w.Int64(s.Nested.Inner)
-	w.String("attrs")
+	n = "inner"
+	w.String(&n)
+	w.Int64(&s.Nested.Inner)
+	n = "attrs"
+	w.String(&n)
 	w.Array() // < array
 	for _, attr := range s.Nested.Attrs {
-		w.String(attr)
+		w.String(&attr)
 	}
 	w.End() // > array
 	w.End() // > nested
 
-	w.String("lastVal")
-	w.Int64(s.LastVal)
+	n = "lastVal"
+	w.String(&n)
+	w.Int64(&s.LastVal)
 
 	w.End()
 }
 
-func (n *Nested) Unmarshal(r *Reader, rv *Value) {
-	r.IterateObject(rv, func(key string, v *Value) {
-		switch key {
-		case "inner":
-			n.Inner = v.VInt64
-			break
-		case "attrs":
-			r.IterateArray(v, func(v *Value) {
-				n.Attrs = append(n.Attrs, v.VString)
-			})
-			break
-		}
-	})
-}
-
-func (s *Sample) Unmarshal(r *Reader, rv *Value) {
-	r.IterateObject(rv, func(key string, v *Value) {
-		switch key {
-		case "name":
-			s.Name = v.VString
-			break
-		case "age":
-			s.Age = v.VInt64
-			break
-		case "isHuman":
-			s.IsHuman = v.VBool
-			break
-		case "nested":
-			s.Nested.Unmarshal(r, v)
-			break
-		case "lastVal":
-			s.LastVal = v.VInt64
-			break
-		}
-	})
-}
-
-func main_2() {
+//	func (n *Nested) Unmarshal(r *Reader, rv *Value) {
+//		r.IterateObject(rv, func(key string, v *Value) {
+//			switch key {
+//			case "inner":
+//				n.Inner = v.VInt64
+//				break
+//			case "attrs":
+//				r.IterateArray(v, func(v *Value) {
+//					n.Attrs = append(n.Attrs, v.VString)
+//				})
+//				break
+//			}
+//		})
+//	}
+//
+//	func (s *Sample) Unmarshal(r *Reader, rv *Value) {
+//		r.IterateObject(rv, func(key string, v *Value) {
+//			switch key {
+//			case "name":
+//				s.Name = v.VString
+//				break
+//			case "age":
+//				s.Age = v.VInt64
+//				break
+//			case "isHuman":
+//				s.IsHuman = v.VBool
+//				break
+//			case "nested":
+//				s.Nested.Unmarshal(r, v)
+//				break
+//			case "lastVal":
+//				s.LastVal = v.VInt64
+//				break
+//			}
+//		})
+//	}
+func main() {
 	fmt.Println("simpser start")
 
 	var bb bytes.Buffer
@@ -582,52 +597,52 @@ func main_2() {
 
 	//PrintReaderObject(NewReader(&bb))
 
-	var s2 Sample
-	if err := NewReader(&bb).Decode(&s2); err != nil {
-		fmt.Println("error on unmarshalling: " + err.Error())
-	}
-	fmt.Println("unmarshalled: ", s2)
-}
-
-func main() {
-	fmt.Println("simpser map")
-	var bb bytes.Buffer
-	w := &Writer{
-		wr: &bb,
-	}
-	m := map[string]any{
-		"name":     "testing_from_map",
-		"age":      18,
-		"isHuman":  true,
-		"lastVal":  999,
-		"otherVal": "dafaq",
-		"nested": map[string]any{
-			"inner": 123,
-			"attrs": []any{"a", "b", "c"},
-		},
-	}
-	WriteVal(w, m)
-	fmt.Println("marshalled: ", bb.Bytes())
-	fmt.Println(string(bb.Bytes()))
-
-	var s2 Sample
-	if err := NewReader(&bb).Decode(&s2); err != nil {
-		fmt.Println("error on unmarshalling: " + err.Error())
-	}
-	fmt.Println("unmarshalled: ", s2)
-
-	//r2 := &Reader{
-	//	rd: &bb,
-	//}
-	//s2 := &Sample{}
-	//if err := s2.Unmarshal(r2); err != nil {
-	//	panic("panic on unmarshalling: " + err.Error())
+	//var s2 Sample
+	//if err := NewReader(&bb).Decode(&s2); err != nil {
+	//	fmt.Println("error on unmarshalling: " + err.Error())
 	//}
 	//fmt.Println("unmarshalled: ", s2)
-
-	//fmt.Println("marshalled: ", bb.Bytes())
-	//fmt.Println(string(bb.Bytes()))
 }
+
+//func main_2() {
+//	fmt.Println("simpser map")
+//	var bb bytes.Buffer
+//	w := &Writer{
+//		wr: &bb,
+//	}
+//	m := map[string]any{
+//		"name":     "testing_from_map",
+//		"age":      18,
+//		"isHuman":  true,
+//		"lastVal":  999,
+//		"otherVal": "dafaq",
+//		"nested": map[string]any{
+//			"inner": 123,
+//			"attrs": []any{"a", "b", "c"},
+//		},
+//	}
+//	WriteVal(w, m)
+//	fmt.Println("marshalled: ", bb.Bytes())
+//	fmt.Println(string(bb.Bytes()))
+//
+//	var s2 Sample
+//	if err := NewReader(&bb).Decode(&s2); err != nil {
+//		fmt.Println("error on unmarshalling: " + err.Error())
+//	}
+//	fmt.Println("unmarshalled: ", s2)
+//
+//	//r2 := &Reader{
+//	//	rd: &bb,
+//	//}
+//	//s2 := &Sample{}
+//	//if err := s2.Unmarshal(r2); err != nil {
+//	//	panic("panic on unmarshalling: " + err.Error())
+//	//}
+//	//fmt.Println("unmarshalled: ", s2)
+//
+//	//fmt.Println("marshalled: ", bb.Bytes())
+//	//fmt.Println(string(bb.Bytes()))
+//}
 
 var sampleValue = Sample{
 	Name:    "testing",
