@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 )
@@ -170,6 +171,42 @@ func (w *Writer) End() {
 	w.Write(Value{
 		Type: ValueType_End,
 	})
+}
+
+type Obj struct {
+	w *Writer
+}
+
+func (w *Writer) Obj() *Obj {
+	w.Object()
+	return &Obj{w: w}
+}
+
+//func (o *Obj) Nested() *Obj {
+//	o.w.Object()
+//	return o
+//}
+
+func (o *Obj) String(k string, v string) *Obj {
+	o.w.String(k)
+	o.w.String(v)
+	return o
+}
+
+func (o *Obj) Int64(k string, v int64) *Obj {
+	o.w.String(k)
+	o.w.Int64(v)
+	return o
+}
+
+func (o *Obj) Bool(k string, v bool) *Obj {
+	o.w.String(k)
+	o.w.Bool(v)
+	return o
+}
+
+func (o *Obj) End() {
+	o.w.End()
 }
 
 // ------------------ reader ------------------
@@ -452,6 +489,14 @@ type Sample struct {
 }
 
 func (s *Sample) Marshal(w *Writer) {
+	// @@TODO: ergonomics
+	//w.Obj().
+	//	String("name", s.Name).
+	//	Int64("age", s.Age).
+	//	Bool("isHuman", s.IsHuman).
+	//	Int64("lastVal", s.LastVal).
+	//	End()
+
 	w.Object()
 	w.String("name")
 	w.String(s.Name)
@@ -582,4 +627,29 @@ func main() {
 
 	//fmt.Println("marshalled: ", bb.Bytes())
 	//fmt.Println(string(bb.Bytes()))
+}
+
+var sampleValue = Sample{
+	Name:    "testing",
+	Age:     18,
+	IsHuman: true,
+	Nested: Nested{
+		Inner: 123,
+		Attrs: []string{"aa", "bb", "cc"},
+	},
+	LastVal: 777,
+}
+
+func MarshallingSimpser() {
+	var bb bytes.Buffer
+	if err := NewWriter(&bb).Encode(&sampleValue); err != nil {
+		panic("panic on marshalling: " + err.Error())
+	}
+}
+
+func MarshallingJSON() {
+	var bb bytes.Buffer
+	if err := json.NewEncoder(&bb).Encode(&sampleValue); err != nil {
+		panic("panic on marshalling: " + err.Error())
+	}
 }
