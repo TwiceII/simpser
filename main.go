@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io"
 )
 
 type ValueType byte
@@ -45,174 +43,13 @@ type Value struct {
 	Type  ValueType
 	Depth int
 
-	VInt64  *int64
-	VString *string
-	VBool   *bool
+	VInt64  int64
+	VInt32  int32
+	VString string
+	VBool   bool
 }
 
 // ------------------ reader ------------------
-
-type ReaderInterface interface {
-	io.Reader
-	io.ByteReader
-}
-
-type Unmarshalable interface {
-	Unmarshal(r *Reader, rv *Value)
-}
-
-type Reader struct {
-	rd    ReaderInterface
-	depth int
-	err   error
-}
-
-func NewReader(r ReaderInterface) *Reader {
-	return &Reader{
-		rd: r,
-	}
-}
-
-func (r *Reader) Err() error {
-	return r.err
-}
-
-func (r *Reader) Decode(v Unmarshalable) error {
-	if r.err != nil {
-		return r.err
-	}
-	rv := r.Read()
-	v.Unmarshal(r, &rv)
-	return r.Err()
-}
-
-func (r *Reader) Read() Value {
-	if r.err != nil {
-		return Value{} // default is ValueType_Error
-	}
-	var v Value
-	// read type byte
-	var (
-		typeB byte
-		err   error
-	)
-	if typeB, err = r.rd.ReadByte(); err != nil {
-		r.err = err
-		return v
-	}
-	v.Type = ValueType(typeB)
-	switch v.Type {
-	case ValueType_End:
-		r.depth--
-		break
-	case ValueType_Object, ValueType_Array:
-		r.depth++
-		v.Depth = r.depth
-		break
-	case ValueType_Int64:
-		if err := binary.Read(r.rd, binary.BigEndian, &v.VInt64); err != nil {
-			r.err = err
-			return v
-		}
-		break
-	case ValueType_String:
-		var sLen int32
-		if err := binary.Read(r.rd, binary.BigEndian, &sLen); err != nil {
-			r.err = err
-			return v
-		}
-		b := make([]byte, sLen)
-		if _, err := r.rd.Read(b); err != nil {
-			r.err = err
-			return v
-		}
-		bs := string(b)
-		v.VString = &bs
-		break
-	case ValueType_Bool:
-		var (
-			bv  byte
-			err error
-		)
-		if bv, err = r.rd.ReadByte(); err != nil {
-			r.err = err
-			return v
-		}
-		if bv == 1 {
-			var b bool = true
-			v.VBool = &b
-		} else {
-			var b bool = false
-			v.VBool = &b
-		}
-		break
-	default:
-		r.err = fmt.Errorf("unknown value type: %d", v.Type)
-		return v
-	}
-
-	return v
-}
-
-func (r *Reader) discardUntilDepth(depth int) {
-	for {
-		if r.depth == depth {
-			break
-		}
-
-		r.Read()
-		if r.err != nil {
-			break
-		}
-	}
-}
-
-func (r *Reader) iterObject(obj, k, v *Value) bool {
-	r.discardUntilDepth(obj.Depth)
-	*k = r.Read()
-	if k.Type == ValueType_Error || k.Type == ValueType_End {
-		return false
-	}
-	*v = r.Read()
-	if v.Type == ValueType_Error {
-		return false
-	}
-
-	return true
-}
-
-func (r *Reader) iterArray(arr, av *Value) bool {
-	r.discardUntilDepth(arr.Depth)
-	*av = r.Read()
-	if av.Type == ValueType_Error || av.Type == ValueType_End {
-		return false
-	}
-	return true
-}
-
-func (r *Reader) IterateObject(obj *Value, kvFn func(key string, v *Value)) {
-	var k, v Value
-	for {
-		if ok := r.iterObject(obj, &k, &v); !ok {
-			break
-		}
-		// assert key is string
-		if k.Type != ValueType_String {
-			panic(fmt.Errorf("key is not string: %s\n", k.Type))
-		}
-		kvFn(*k.VString, &v)
-	}
-}
-
-func (r *Reader) IterateArray(arr *Value, avFn func(v *Value)) {
-	var av Value
-	for {
-		if ok := r.iterArray(arr, &av); !ok {
-			break
-		}
-		avFn(&av)
-	}
-}
 
 // ------------------ inspection ------------------
 
@@ -222,72 +59,72 @@ func printIndent(depth int) {
 	}
 }
 
-func PrintReaderObject(r *Reader) {
-	obj := r.Read()
-	PrintValue(r, obj, 0)
-}
+//func PrintReaderObject(r *Reader) {
+//	obj := r.Read()
+//	PrintValue(r, obj, 0)
+//}
 
-func PrintValue(r *Reader, val Value, depth int) {
-	var k, v Value
-	var count int
-	switch val.Type {
-	case ValueType_Object:
-		fmt.Print("{\n")
-		for {
-			if ok := r.iterObject(&val, &k, &v); !ok {
-				break
-			}
-			if count > 0 {
-				fmt.Print(",\n")
-			}
-			count++
-			printIndent(depth + 1)
-			PrintValue(r, k, depth+1)
-			fmt.Print(": ")
-			PrintValue(r, v, depth+1)
-		}
-		if count > 0 {
-			fmt.Print("\n")
-		}
-		printIndent(depth)
-		fmt.Print("}")
-		break
-	case ValueType_Array:
-		fmt.Print("[\n")
-		for {
-			if ok := r.iterArray(&val, &v); !ok {
-				break
-			}
-			if count > 0 {
-				fmt.Print(",\n")
-			}
-			count++
-			printIndent(depth + 1)
-			PrintValue(r, v, depth+1)
-		}
-		if count > 0 {
-			fmt.Print("\n")
-		}
-		printIndent(depth)
-		fmt.Print("]")
-		break
-	case ValueType_Int64:
-		fmt.Printf("%d", val.VInt64)
-		break
-	case ValueType_Bool:
-		if *val.VBool {
-			fmt.Print("true")
-		} else {
-			fmt.Print("false")
-		}
-		break
-	case ValueType_String:
-		fmt.Printf("%q", *val.VString)
-		break
-	default:
-		fmt.Printf("ERROR: unknown value type: %d", val.Type)
-	}
-}
+//func PrintValue(r *Reader, val Value, depth int) {
+//	var k, v Value
+//	var count int
+//	switch val.Type {
+//	case ValueType_Object:
+//		fmt.Print("{\n")
+//		for {
+//			if ok := r.iterObject(&val, &k, &v); !ok {
+//				break
+//			}
+//			if count > 0 {
+//				fmt.Print(",\n")
+//			}
+//			count++
+//			printIndent(depth + 1)
+//			PrintValue(r, k, depth+1)
+//			fmt.Print(": ")
+//			PrintValue(r, v, depth+1)
+//		}
+//		if count > 0 {
+//			fmt.Print("\n")
+//		}
+//		printIndent(depth)
+//		fmt.Print("}")
+//		break
+//	case ValueType_Array:
+//		fmt.Print("[\n")
+//		for {
+//			if ok := r.iterArray(&val, &v); !ok {
+//				break
+//			}
+//			if count > 0 {
+//				fmt.Print(",\n")
+//			}
+//			count++
+//			printIndent(depth + 1)
+//			PrintValue(r, v, depth+1)
+//		}
+//		if count > 0 {
+//			fmt.Print("\n")
+//		}
+//		printIndent(depth)
+//		fmt.Print("]")
+//		break
+//	case ValueType_Int64:
+//		fmt.Printf("%d", val.VInt64)
+//		break
+//	case ValueType_Bool:
+//		if *val.VBool {
+//			fmt.Print("true")
+//		} else {
+//			fmt.Print("false")
+//		}
+//		break
+//	case ValueType_String:
+//		fmt.Printf("%q", *val.VString)
+//		break
+//	default:
+//		fmt.Printf("ERROR: unknown value type: %d", val.Type)
+//	}
+//}
 
 // ------------------ map ------------------
 
@@ -378,43 +215,57 @@ func (s *Sample) Marshal(w *Writer) {
 	w.End()
 }
 
-//	func (n *Nested) Unmarshal(r *Reader, rv *Value) {
-//		r.IterateObject(rv, func(key string, v *Value) {
-//			switch key {
-//			case "inner":
-//				n.Inner = v.VInt64
-//				break
-//			case "attrs":
-//				r.IterateArray(v, func(v *Value) {
-//					n.Attrs = append(n.Attrs, v.VString)
-//				})
-//				break
-//			}
-//		})
-//	}
-//
-//	func (s *Sample) Unmarshal(r *Reader, rv *Value) {
-//		r.IterateObject(rv, func(key string, v *Value) {
-//			switch key {
-//			case "name":
-//				s.Name = v.VString
-//				break
-//			case "age":
-//				s.Age = v.VInt64
-//				break
-//			case "isHuman":
-//				s.IsHuman = v.VBool
-//				break
-//			case "nested":
-//				s.Nested.Unmarshal(r, v)
-//				break
-//			case "lastVal":
-//				s.LastVal = v.VInt64
-//				break
-//			}
-//		})
-//	}
+func (n *Nested) Unmarshal(r *Reader, rv *Value) {
+	r.IterateObject(rv, func(key string, v *Value) {
+		switch key {
+		case "inner":
+			n.Inner = v.VInt64
+			break
+		case "attrs":
+			r.IterateArray(v, func(v *Value) {
+				n.Attrs = append(n.Attrs, v.VString)
+			})
+			break
+		}
+	})
+}
+
+func (s *Sample) Unmarshal(r *Reader, rv *Value) {
+	r.IterateObject(rv, func(key string, v *Value) {
+		switch key {
+		case "name":
+			s.Name = v.VString
+			break
+		case "age":
+			s.Age = v.VInt64
+			break
+		case "isHuman":
+			s.IsHuman = v.VBool
+			break
+		case "nested":
+			s.Nested.Unmarshal(r, v)
+			break
+		case "lastVal":
+			s.LastVal = v.VInt64
+			break
+		}
+	})
+}
+
 func main() {
+	dt, err := Marshal(&sampleValue)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("marshalled: ", dt)
+	var s2 SmallStruct
+	if err := Unmarshal(dt, &s2); err != nil {
+		panic("panic on unmarshalling: " + err.Error())
+	}
+	fmt.Println("unmarshalled: ", s2)
+}
+
+func main_3() {
 	fmt.Println("simpser start")
 
 	s := Sample{
@@ -437,6 +288,12 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("marshalled: ", dt)
+
+	var s2 Sample
+	if err := Unmarshal(dt, &s2); err != nil {
+		panic("panic on unmarshalling: " + err.Error())
+	}
+	fmt.Println("unmarshalled: ", s2)
 
 	//PrintReaderObject(NewReader(&bb))
 

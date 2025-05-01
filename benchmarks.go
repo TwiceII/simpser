@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/gob"
 	"encoding/json"
+	"math"
 	"time"
 )
 
@@ -64,4 +65,25 @@ func (s *SmallStruct) Marshal(w *Writer) {
 	w.String("money")
 	w.Float64(s.Money)
 	w.End()
+}
+
+func (s *SmallStruct) Unmarshal(r *Reader, rv *Value) {
+	r.IterateObject(rv, func(key string, v *Value) {
+		switch key {
+		case "name":
+			s.Name = v.VString
+		case "birthDay":
+			s.BirthDay = time.UnixMilli(v.VInt64)
+		case "phone":
+			s.Phone = v.VString
+		case "siblings":
+			s.Siblings = int(v.VInt32)
+		case "spouse":
+			s.Spouse = v.VBool
+		case "money":
+			s.Money = math.Float64frombits(uint64(v.VInt64))
+		default:
+			panic("unknown field")
+		}
+	})
 }

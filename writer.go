@@ -38,6 +38,7 @@ func getBufferData() []byte {
 		return bd
 	}
 	return make([]byte, 0, 1024)
+	//return make([]byte, 0, 128)
 }
 
 func NewWriter() *Writer {
