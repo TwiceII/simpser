@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 )
@@ -36,9 +34,11 @@ const (
 	ValueType_End
 	ValueType_Object
 	ValueType_Array
-	ValueType_Int64
-	ValueType_Bool
 	ValueType_String
+	ValueType_Int32
+	ValueType_Int64
+	ValueType_Float64
+	ValueType_Bool
 )
 
 type Value struct {
@@ -49,171 +49,6 @@ type Value struct {
 	VString *string
 	VBool   *bool
 }
-
-type WriterInterface interface {
-	io.Writer
-	io.ByteWriter
-}
-
-type Writer struct {
-	wr   WriterInterface
-	data []byte
-}
-
-type Marshalable interface {
-	Marshal(w *Writer)
-}
-
-func NewWriter(w WriterInterface) *Writer {
-	if w == nil {
-		panic("writer is nil")
-	}
-	return &Writer{
-		wr:   w,
-		data: make([]byte, 0, 64),
-	}
-}
-
-func (w *Writer) Encode(v Marshalable) error {
-	v.Marshal(w)
-	_, err := w.wr.Write(w.data)
-	return err
-}
-
-func (w *Writer) EnsureSpace(n int) {
-	var desiredSize = len(w.data) + n
-	if len(w.data) < desiredSize {
-		if cap(w.data) >= desiredSize {
-			w.data = w.data[:desiredSize]
-		} else {
-			w.data = append(w.data, make([]byte, desiredSize-len(w.data))...)
-		}
-	}
-}
-
-func (w *Writer) WriteBytes(newData ...byte) {
-	w.data = append(w.data, newData...)
-}
-
-func (w *Writer) writeUint64(v *uint64) {
-	w.data = binary.BigEndian.AppendUint64(w.data, *v)
-}
-
-func (w *Writer) writeInt64(v *int64) {
-	w.data = binary.BigEndian.AppendUint64(w.data, uint64(*v))
-}
-
-func (w *Writer) writeInt32(v *int32) {
-	w.data = binary.BigEndian.AppendUint32(w.data, uint32(*v))
-}
-
-func (w *Writer) Write(v Value) {
-	// write tag byte
-	w.WriteBytes(byte(v.Type))
-	switch v.Type {
-	case ValueType_Int64:
-		w.writeInt64(v.VInt64)
-		break
-	case ValueType_String:
-		size := len(*v.VString)
-		sizeInt32 := int32(size)
-		w.writeInt32(&sizeInt32)
-		var pos = len(w.data)
-		w.EnsureSpace(size)
-		copy(w.data[pos:pos+size], *v.VString)
-		break
-	case ValueType_Bool:
-		var bv byte
-		if *v.VBool {
-			bv = 1
-		}
-		w.WriteBytes(bv)
-		break
-	}
-}
-
-func (w *Writer) Int(v *int) {
-	v64 := int64(*v)
-	w.Write(Value{
-		Type:   ValueType_Int64,
-		VInt64: &v64,
-	})
-}
-
-func (w *Writer) Int64(v *int64) {
-	w.Write(Value{
-		Type:   ValueType_Int64,
-		VInt64: v,
-	})
-}
-
-func (w *Writer) String(v *string) {
-	w.Write(Value{
-		Type:    ValueType_String,
-		VString: v,
-	})
-}
-
-func (w *Writer) Bool(v *bool) {
-	w.Write(Value{
-		Type:  ValueType_Bool,
-		VBool: v,
-	})
-}
-
-func (w *Writer) Object() {
-	w.Write(Value{
-		Type: ValueType_Object,
-	})
-}
-
-func (w *Writer) Array() {
-	w.Write(Value{
-		Type: ValueType_Array,
-	})
-}
-
-func (w *Writer) End() {
-	w.Write(Value{
-		Type: ValueType_End,
-	})
-}
-
-type Obj struct {
-	w *Writer
-}
-
-func (w *Writer) Obj() *Obj {
-	w.Object()
-	return &Obj{w: w}
-}
-
-//func (o *Obj) Nested() *Obj {
-//	o.w.Object()
-//	return o
-//}
-
-//func (o *Obj) String(k string, v string) *Obj {
-//	o.w.String(k)
-//	o.w.String(v)
-//	return o
-//}
-//
-//func (o *Obj) Int64(k string, v int64) *Obj {
-//	o.w.String(k)
-//	o.w.Int64(v)
-//	return o
-//}
-//
-//func (o *Obj) Bool(k string, v bool) *Obj {
-//	o.w.String(k)
-//	o.w.Bool(v)
-//	return o
-//}
-//
-//func (o *Obj) End() {
-//	o.w.End()
-//}
 
 // ------------------ reader ------------------
 
@@ -456,31 +291,31 @@ func PrintValue(r *Reader, val Value, depth int) {
 
 // ------------------ map ------------------
 
-func WriteVal(w *Writer, v any) {
-	switch v := v.(type) {
-	case map[string]any:
-		w.Object()
-		for k, v := range v {
-			w.String(&k)
-			WriteVal(w, v)
-		}
-		w.End()
-	case []any:
-		w.Array()
-		for _, item := range v {
-			WriteVal(w, item)
-		}
-		w.End()
-	case string:
-		w.String(&v)
-	case int:
-		w.Int(&v)
-	case bool:
-		w.Bool(&v)
-	default:
-		panic(fmt.Errorf("unsupported type %T", v))
-	}
-}
+//func WriteVal(w *Writer, v any) {
+//	switch v := v.(type) {
+//	case map[string]any:
+//		w.Object()
+//		for k, v := range v {
+//			w.String(&k)
+//			WriteVal(w, v)
+//		}
+//		w.End()
+//	case []any:
+//		w.Array()
+//		for _, item := range v {
+//			WriteVal(w, item)
+//		}
+//		w.End()
+//	case string:
+//		w.String(&v)
+//	case int:
+//		w.Int(&v)
+//	case bool:
+//		w.Bool(&v)
+//	default:
+//		panic(fmt.Errorf("unsupported type %T", v))
+//	}
+//}
 
 // ------------------ main ------------------
 
@@ -497,6 +332,16 @@ type Sample struct {
 	LastVal int64
 }
 
+func (s *Sample) Marshal_old(w *Writer) {
+	w.Object()
+	w.Int64(s.Age)
+	w.String("name")
+	w.String(s.Name)
+	w.String("age")
+	w.Int64(s.Age)
+	w.End()
+}
+
 func (s *Sample) Marshal(w *Writer) {
 	// @@TODO: ergonomics
 	//w.Obj().
@@ -507,35 +352,28 @@ func (s *Sample) Marshal(w *Writer) {
 	//	End()
 
 	w.Object()
-	n := "name"
-	w.String(&n)
-	w.String(&s.Name)
-	n = "age"
-	w.String(&n)
-	w.Int64(&s.Age)
-	n = "isHuman"
-	w.String(&n)
-	w.Bool(&s.IsHuman)
+	w.String("name")
+	w.String(s.Name)
+	w.String("age")
+	w.Int64(s.Age)
+	w.String("isHuman")
+	w.Bool(s.IsHuman)
 
 	// nested
-	n = "nested"
-	w.String(&n)
+	w.String("nested")
 	w.Object() // < nested
-	n = "inner"
-	w.String(&n)
-	w.Int64(&s.Nested.Inner)
-	n = "attrs"
-	w.String(&n)
+	w.String("inner")
+	w.Int64(s.Nested.Inner)
+	w.String("attrs")
 	w.Array() // < array
 	for _, attr := range s.Nested.Attrs {
-		w.String(&attr)
+		w.String(attr)
 	}
 	w.End() // > array
 	w.End() // > nested
 
-	n = "lastVal"
-	w.String(&n)
-	w.Int64(&s.LastVal)
+	w.String("lastVal")
+	w.Int64(s.LastVal)
 
 	w.End()
 }
@@ -579,7 +417,6 @@ func (s *Sample) Marshal(w *Writer) {
 func main() {
 	fmt.Println("simpser start")
 
-	var bb bytes.Buffer
 	s := Sample{
 		Name:    "testing",
 		Age:     18,
@@ -590,10 +427,16 @@ func main() {
 		},
 		LastVal: 777,
 	}
-	if err := NewWriter(&bb).Encode(&s); err != nil {
-		panic("panic on marshalling: " + err.Error())
+	//if err := NewWriter(&bb).Encode(&s); err != nil {
+	//	panic("panic on marshalling: " + err.Error())
+	//}
+	//fmt.Println("marshalled: ", bb.Bytes())
+
+	dt, err := Marshal(&s)
+	if err != nil {
+		panic(err)
 	}
-	fmt.Println("marshalled: ", bb.Bytes())
+	fmt.Println("marshalled: ", dt)
 
 	//PrintReaderObject(NewReader(&bb))
 
@@ -643,28 +486,3 @@ func main() {
 //	//fmt.Println("marshalled: ", bb.Bytes())
 //	//fmt.Println(string(bb.Bytes()))
 //}
-
-var sampleValue = Sample{
-	Name:    "testing",
-	Age:     18,
-	IsHuman: true,
-	Nested: Nested{
-		Inner: 123,
-		Attrs: []string{"aa", "bb", "cc"},
-	},
-	LastVal: 777,
-}
-
-func MarshallingSimpser() {
-	var bb bytes.Buffer
-	if err := NewWriter(&bb).Encode(&sampleValue); err != nil {
-		panic("panic on marshalling: " + err.Error())
-	}
-}
-
-func MarshallingJSON() {
-	var bb bytes.Buffer
-	if err := json.NewEncoder(&bb).Encode(&sampleValue); err != nil {
-		panic("panic on marshalling: " + err.Error())
-	}
-}
