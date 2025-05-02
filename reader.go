@@ -7,7 +7,7 @@ import (
 )
 
 type Unmarshalable interface {
-	Unmarshal(r *Reader, rv *Value)
+	Unmarshal(r *Reader, rv Value)
 }
 
 type Reader struct {
@@ -18,14 +18,14 @@ type Reader struct {
 }
 
 func Unmarshal(data []byte, uv Unmarshalable) error {
-	r := &Reader{
+	r := Reader{
 		data:  data,
 		cur:   0,
 		depth: 0,
 	}
 	v := r.Read()
 
-	uv.Unmarshal(r, v)
+	uv.Unmarshal(&r, v)
 	return r.err
 }
 
@@ -41,7 +41,7 @@ func (r *Reader) readBytes(n int) []byte {
 	return b
 }
 
-func (r *Reader) Read() *Value {
+func (r *Reader) Read_old() *Value {
 	var v Value
 	// read type byte
 	var (
@@ -84,6 +84,49 @@ func (r *Reader) Read() *Value {
 	return &v
 }
 
+func (r *Reader) Read() Value {
+	var v Value
+	// read type byte
+	var (
+		typeB byte
+	)
+	typeB = r.readByte()
+	v.Type = ValueType(typeB)
+	switch v.Type {
+	case ValueType_End:
+		r.depth--
+		break
+	case ValueType_Object, ValueType_Array:
+		r.depth++
+		v.Depth = r.depth
+		break
+	case ValueType_Int32:
+		v.VInt32 = int32(binary.BigEndian.Uint32(r.readBytes(4)))
+		break
+	case ValueType_Int64, ValueType_Float64:
+		v.VInt64 = int64(binary.BigEndian.Uint64(r.readBytes(8)))
+		break
+	case ValueType_String:
+		sLen := int(binary.BigEndian.Uint32(r.readBytes(4)))
+		v.VString = unsafe.String(&r.data[r.cur], sLen)
+		r.cur += sLen
+		break
+	case ValueType_Bool:
+		b := r.readByte()
+		if b == 1 {
+			v.VBool = true
+		} else {
+			v.VBool = false
+		}
+		break
+	default:
+		r.err = fmt.Errorf("unknown value type: %d", v.Type)
+		return v
+	}
+
+	return v
+}
+
 func (r *Reader) discardUntilDepth(depth int) {
 	for {
 		if r.depth == depth {
@@ -97,21 +140,49 @@ func (r *Reader) discardUntilDepth(depth int) {
 	}
 }
 
-func (r *Reader) iterObject(obj, k, v *Value) bool {
+//func (r *Reader) iterObject(obj, k, v *Value) bool {
+//	r.discardUntilDepth(obj.Depth)
+//	k = r.Read()
+//	if k.Type == ValueType_Error || k.Type == ValueType_End {
+//		return false
+//	}
+//	v = r.Read()
+//	if v.Type == ValueType_Error {
+//		return false
+//	}
+//
+//	return true
+//	//return false
+//}
+
+func (r *Reader) iterObject(obj Value) (cont bool, k, v Value) {
 	r.discardUntilDepth(obj.Depth)
-	*k = *r.Read()
+	k = r.Read()
 	if k.Type == ValueType_Error || k.Type == ValueType_End {
-		return false
+		cont = false
+		return
 	}
-	*v = *r.Read()
+	v = r.Read()
 	if v.Type == ValueType_Error {
-		return false
+		cont = false
+		return
 	}
 
-	return true
+	cont = true
+	return
+	//return false
 }
 
-func (r *Reader) iterArray(arr, av *Value) bool {
+//func (r *Reader) iterArray(arr, av *Value) bool {
+//	r.discardUntilDepth(arr.Depth)
+//	av = r.Read()
+//	if av.Type == ValueType_Error || av.Type == ValueType_End {
+//		return false
+//	}
+//	return true
+//}
+
+func (r *Reader) iterArray(arr, av Value) bool {
 	r.discardUntilDepth(arr.Depth)
 	av = r.Read()
 	if av.Type == ValueType_Error || av.Type == ValueType_End {
@@ -120,26 +191,26 @@ func (r *Reader) iterArray(arr, av *Value) bool {
 	return true
 }
 
-func (r *Reader) IterateObject(obj *Value, kvFn func(key string, v *Value)) {
-	var k, v Value
+func (r *Reader) IterateObject(obj Value, kvFn func(key string, v Value)) {
 	for {
-		if ok := r.iterObject(obj, &k, &v); !ok {
+		ok, k, v := r.iterObject(obj)
+		if !ok {
 			break
 		}
 		// assert key is string
 		if k.Type != ValueType_String {
 			panic(fmt.Errorf("key is not string: %s\n", k.Type))
 		}
-		kvFn(k.VString, &v)
+		kvFn(k.VString, v)
 	}
 }
 
-func (r *Reader) IterateArray(arr *Value, avFn func(v *Value)) {
+func (r *Reader) IterateArray(arr Value, avFn func(v Value)) {
 	var av Value
 	for {
-		if ok := r.iterArray(arr, &av); !ok {
+		if ok := r.iterArray(arr, av); !ok {
 			break
 		}
-		avFn(&av)
+		avFn(av)
 	}
 }

@@ -26,11 +26,6 @@ func MarshallingJSON() {
 	json.Marshal(&sampleValue)
 }
 
-func init() {
-	gob.Register(&SmallStruct{})
-	gob.Register(&Sample{})
-}
-
 // SmallStruct is a test structure of small size.
 type SmallStruct struct {
 	Name     string
@@ -50,6 +45,20 @@ var sampleValue = SmallStruct{
 	Money:    123456.789,
 }
 
+var marshalledSampleValue_2 []byte
+var marshalledSampleValue []byte = []byte{2, 4, 0, 0, 0, 4, 110, 97, 109, 101, 4, 0, 0, 0, 21, 115, 111, 109, 101, 32, 112, 114, 101, 116, 116, 121, 32, 108, 111, 110, 103, 32, 110, 97, 109, 101, 4, 0, 0, 0, 8, 98, 105, 114, 116, 104, 68, 97, 121, 6, 0, 0, 1, 138, 232, 136, 228, 0, 4, 0, 0, 0, 5, 112, 104, 111, 110, 101, 4, 0, 0, 0, 10, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 4, 0, 0, 0, 8, 115, 105, 98, 108, 105, 110, 103, 115, 5, 0, 0, 0, 3, 4, 0, 0, 0, 6, 115, 112, 111, 117, 115, 101, 8, 1, 4, 0, 0, 0, 5, 109, 111, 110, 101, 121, 7, 64, 254, 36, 12, 159, 190, 118, 201, 1}
+
+func init() {
+	gob.Register(&SmallStruct{})
+	gob.Register(&Sample{})
+	//dt, err := Marshal(&sampleValue)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//marshalledSampleValue = dt
+	//fmt.Println("marshalled: ", marshalledSampleValue)
+}
+
 func (s *SmallStruct) Marshal(w *Writer) {
 	w.Object()
 	w.String("name")
@@ -67,8 +76,8 @@ func (s *SmallStruct) Marshal(w *Writer) {
 	w.End()
 }
 
-func (s *SmallStruct) Unmarshal(r *Reader, rv *Value) {
-	r.IterateObject(rv, func(key string, v *Value) {
+func (s *SmallStruct) Unmarshal(r *Reader, rv Value) {
+	r.IterateObject(rv, func(key string, v Value) {
 		switch key {
 		case "name":
 			s.Name = v.VString

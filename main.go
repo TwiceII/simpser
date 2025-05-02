@@ -215,14 +215,14 @@ func (s *Sample) Marshal(w *Writer) {
 	w.End()
 }
 
-func (n *Nested) Unmarshal(r *Reader, rv *Value) {
-	r.IterateObject(rv, func(key string, v *Value) {
+func (n *Nested) Unmarshal(r *Reader, rv Value) {
+	r.IterateObject(rv, func(key string, v Value) {
 		switch key {
 		case "inner":
 			n.Inner = v.VInt64
 			break
 		case "attrs":
-			r.IterateArray(v, func(v *Value) {
+			r.IterateArray(v, func(v Value) {
 				n.Attrs = append(n.Attrs, v.VString)
 			})
 			break
@@ -230,8 +230,8 @@ func (n *Nested) Unmarshal(r *Reader, rv *Value) {
 	})
 }
 
-func (s *Sample) Unmarshal(r *Reader, rv *Value) {
-	r.IterateObject(rv, func(key string, v *Value) {
+func (s *Sample) Unmarshal(r *Reader, rv Value) {
+	r.IterateObject(rv, func(key string, v Value) {
 		switch key {
 		case "name":
 			s.Name = v.VString
